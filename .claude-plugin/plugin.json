@@ -1,0 +1,44 @@
+{
+  "name": "gitlab-panel",
+  "version": "0.1.0",
+  "description": "Your open GitLab merge requests beside the chat, across the projects you pick: pipeline, merge status, conflicts and comments, live; open, copy or comment from the panel.",
+  "author": {
+    "name": "rndbblnn",
+    "url": "https://github.com/rndbblnn"
+  },
+  "repository": "https://github.com/rndbblnn/cc-mod-gitlab",
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "projects": {
+      "type": "string",
+      "title": "Projects to watch",
+      "description": "Comma-separated GitLab projects: a full path (group/sub/name) or a bare name matched against the last path segment. Empty shows your open MRs in every project.",
+      "default": ""
+    },
+    "host": {
+      "type": "string",
+      "title": "GitLab host",
+      "description": "Passed to `glab api --hostname`",
+      "default": "gitlab.com"
+    },
+    "glab": {
+      "type": "string",
+      "title": "glab executable",
+      "description": "Path or name of the glab CLI, which must be signed in (glab auth status)",
+      "default": "glab"
+    },
+    "refreshSeconds": {
+      "type": "number",
+      "title": "Refresh every (seconds)",
+      "description": "Re-reads your open MRs this often. 0 turns polling off (refresh with r or /gitlab refresh).",
+      "default": 60
+    },
+    "instructClaude": {
+      "type": "boolean",
+      "title": "Tell Claude about the panel",
+      "description": "Adds a short system-prompt section naming the watched projects and the mrs tool",
+      "default": true
+    }
+  }
+}

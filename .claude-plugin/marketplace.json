@@ -1,0 +1,11 @@
+{
+  "name": "rndbblnn-gitlab",
+  "owner": { "name": "rndbblnn" },
+  "plugins": [
+    {
+      "name": "gitlab-panel",
+      "source": "./",
+      "description": "Your open GitLab merge requests beside the chat, across the projects you pick: pipeline, merge status, conflicts and comments, live."
+    }
+  ]
+}
