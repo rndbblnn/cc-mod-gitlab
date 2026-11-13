@@ -24,11 +24,18 @@ const mr = (project: string, iid: number, extra: Record<string, unknown> = {}) =
 })
 
 const run = (v: unknown) => ({ value: { exitCode: 0, stdout: JSON.stringify(v), stderr: '' } })
+const descriptions = new Map<string, string>()
 
-function engine(on: any, argvs: string[][], pipeline = { status: 'success' }) {
+function engine(on: any, argvs: string[][], pipeline = { status: 'success' }, onOpen = () => {}) {
   on('command.register', () => ({ value: { command: 'gitlab' } }))
-  on('tool.register', (_: unknown, e: { name: string }) => ({ value: { tool: `mcp__gitlab-panel__${e.name}` } }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('tool.register', (_: unknown, e: { name: string; description: string }) => {
+    descriptions.set(e.name, e.description)
+    return { value: { tool: `mcp__gitlab-panel__${e.name}` } }
+  })
+  on('ui.open', () => {
+    onOpen()
+    return { value: { isPlaced: true } }
+  })
   on('ui.panes', () => ({ value: [] }))
   on('ui.toast', () => ({ value: undefined }))
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
@@ -56,6 +63,8 @@ test('lists only the watched projects, in order, and comments through glab', { o
   expect(await ui.find({ key: 'row-midas-app!1' })).toBeTruthy()
   expect(await ui.find({ key: 'row-other!2' })).toBeFalsy()
   await ui.press({ key: 'row-midas-backend!3' })
+  expect(argvs.some(a => a[0] === 'xdg-open' && a[1]!.includes('/merge_requests/3'))).toBe(true)
+  await $.command.run({ command: 'gitlab', args: 'midas-backend!3' } as never)
   expect(await ui.find({ type: 'Text', text: /pipeline failed/ })).toBeTruthy()
   await ui.press({ key: 'comment-btn' })
   await ui.input({ key: 'comment', text: 'looks good' })
@@ -64,13 +73,25 @@ test('lists only the watched projects, in order, and comments through glab', { o
   await ui.unmount()
 })
 
-test('the mrs tool answers with the list, and the prompt names the projects', { options: { projects: 'midas-app' } }, async ($, on) => {
+test('the mrs tool answers with the list, and its description names the projects', { options: { projects: 'midas-app' } }, async ($, on) => {
   engine(on, [])
-  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'hi', scope: 'shared' }] }))
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   const r = await $.tool.call({ tool: 'mcp__gitlab-panel__mrs', refresh: true } as never)
-  expect(JSON.stringify(r)).toContain('- midas-app!1 Title 1 (feat-1 → main) [pipeline success; ready')
+  expect(JSON.stringify(r)).toContain('- midas-app!1 Title 1 (feat-1 › main) [pipeline success; ready')
   expect(JSON.stringify(r)).not.toContain('midas-backend')
-  const composed = await $.prompt.compose({ model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: ['terminal'], tools: [], outputStyle: null, traits: [] } as never)
-  expect(composed.sections.find(s => s.id === 'gitlab-panel:mrs')?.text).toContain('in midas-app')
+  expect(descriptions.get('mrs')).toContain('in midas-app')
 })
+
+for (const [name, openOnStart, want] of [
+  ['opens the pane at session start by default', undefined, 1],
+  ['openOnStart false leaves the pane closed', false, 0],
+] as const) {
+  test(name, { options: { projects: 'midas-app', ...(openOnStart === undefined ? {} : { openOnStart }) } }, async ($, on) => {
+    let opens = 0
+    engine(on, [], undefined, () => opens++)
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    expect(opens).toBe(want)
+    await $.command.run({ command: 'gitlab', args: 'refresh' } as never) // let the start-up read settle
+  })
+}

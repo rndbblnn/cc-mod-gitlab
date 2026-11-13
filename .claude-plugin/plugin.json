@@ -10,6 +10,12 @@
   "license": "MIT",
   "types": "./types/index.d.ts",
   "userConfig": {
+    "openOnStart": {
+      "type": "boolean",
+      "title": "Open the panel when Claude starts",
+      "description": "Open the GitLab MRs pane at the start of every interactive session",
+      "default": true
+    },
     "projects": {
       "type": "string",
       "title": "Projects to watch",
@@ -37,8 +43,26 @@
     "instructClaude": {
       "type": "boolean",
       "title": "Tell Claude about the panel",
-      "description": "Adds a short system-prompt section naming the watched projects and the mrs tool",
+      "description": "Adds a short note to the mrs tool's description naming the watched projects and when to call it",
       "default": true
+    },
+    "prodJobs": {
+      "type": "string",
+      "title": "Prod deploy job per project",
+      "description": "Comma-separated project=job name pairs naming each project's prod deploy job in its main pipeline; * is the fallback. Drives the Shipping section (your merged MRs not in prod yet).",
+      "default": "midas-app=deploy:production, *=2.terraform apply prod"
+    },
+    "shipDays": {
+      "type": "number",
+      "title": "Shipping: merged within (days)",
+      "description": "How far back to look for your merged MRs (days; 1 = last 24 h). 0 hides the Shipping section.",
+      "default": 1
+    },
+    "shipMax": {
+      "type": "number",
+      "title": "Shipping: at most",
+      "description": "Keep only this many of your most recently merged MRs in the Shipping section.",
+      "default": 3
     }
   }
 }

@@ -64,7 +64,7 @@ test('diff reports pipeline, conflicts, comments and MRs gone', async () => {
   const b = M({ ref: 'app!2', iid: 2 })
   const changes = diff([a, b], [{ ...a, pipeline: 'failed', conflicts: true, notes: 2 }], 5)
   expect(changes.map(c => `${c.ref} ${c.what} ${c.tone}`)).toEqual([
-    'app!1 pipeline running → failed bad',
+    'app!1 pipeline running › failed bad',
     'app!1 has conflicts bad',
     'app!1 +2 comments info',
     'app!2 merged or closed good',
@@ -78,12 +78,12 @@ test('labels, refs, legend and fit', async () => {
   expect(parseMRRef('https://gitlab.com/g/s/midas-app/-/merge_requests/12')).toBe('midas-app!12')
   expect(parseMRRef('midas-backend!1363')).toBe('midas-backend!1363')
   expect(legend([M({ pipeline: 'failed' }), M({ pipeline: null })]).map(l => l.label)).toEqual(['failed', 'no pipeline'])
-  expect(fit('abcdef', 4)).toBe('abc…')
+  expect(fit('abcdef', 4)).toBe('abc⋯')
   expect(touchesMRs('git push -u origin HEAD')).toBe(true)
   expect(touchesMRs('git status')).toBe(false)
 })
 
 test('mrsText lists one line per MR', async () => {
   const t = mrsText([M({ pipeline: 'success', notes: 3 })], ['app'], 0, 1000)
-  expect(t).toContain('- app!1 t 1 (b1 → main) [pipeline success; ready; 3 comments')
+  expect(t).toContain('- app!1 t 1 (b1 › main) [pipeline success; ready; 3 comments')
 })

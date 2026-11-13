@@ -132,11 +132,11 @@ export function diff(prev: readonly MR[], next: readonly MR[], at: number): Chan
       continue
     }
     if (p.pipeline !== m.pipeline && m.pipeline)
-      add(m, `pipeline ${p.pipeline ?? 'none'} → ${m.pipeline}`, m.pipeline === 'success' ? 'good' : m.pipeline === 'failed' ? 'bad' : 'info')
+      add(m, `pipeline ${p.pipeline ?? 'none'} › ${m.pipeline}`, m.pipeline === 'success' ? 'good' : m.pipeline === 'failed' ? 'bad' : 'info')
     if (!p.conflicts && m.conflicts) add(m, 'has conflicts', 'bad')
     else if (p.conflicts && !m.conflicts) add(m, 'conflicts resolved', 'good')
     if (p.mergeStatus !== m.mergeStatus && !TRANSIENT.has(p.mergeStatus) && !TRANSIENT.has(m.mergeStatus) && m.mergeStatus !== 'conflict')
-      add(m, `${mergeLabel(p).text} → ${mergeLabel(m).text}`, m.mergeStatus === 'mergeable' ? 'good' : 'info')
+      add(m, `${mergeLabel(p).text} › ${mergeLabel(m).text}`, m.mergeStatus === 'mergeable' ? 'good' : 'info')
     if (p.draft !== m.draft) add(m, m.draft ? 'marked draft' : 'marked ready', 'info')
     if (m.notes > p.notes) add(m, `+${m.notes - p.notes} comment${m.notes - p.notes > 1 ? 's' : ''}`, 'info')
   }
@@ -152,14 +152,18 @@ export function upsert(mrs: readonly MR[], mr: MR, projects: readonly string[]):
 
 // ── Labels ────────────────────────────────────────────────────────────
 
+// Every glyph here must be one cell wide in any terminal: no East Asian "ambiguous" or emoji-capable
+// characters (e.g. ▶ U+25B6, ◐ U+25D0), which some fonts draw two cells wide and which break the columns.
+/** The only non-ASCII characters the panel draws: East Asian width N, in DejaVu Sans Mono and Noto Sans Mono. */
+export const SINGLE_CELL = '✓⊗◔◌▸⊘∙⋯‹›⇄'
 export function glyph(pipeline: string | null): string {
   switch (pipeline) {
     case 'success':
       return '✓'
     case 'failed':
-      return '✗'
+      return '⊗'
     case 'running':
-      return '◐'
+      return '◔'
     case 'pending':
     case 'created':
     case 'waiting_for_resource':
@@ -167,12 +171,12 @@ export function glyph(pipeline: string | null): string {
     case 'scheduled':
       return '◌'
     case 'manual':
-      return '▶'
+      return '▸'
     case 'canceled':
     case 'skipped':
       return '⊘'
     default:
-      return '·'
+      return '∙'
   }
 }
 
@@ -244,16 +248,16 @@ const LEGEND: { status: string; label: string }[] = [
 export function legend(mrs: readonly Pick<MR, 'pipeline'>[]): { glyph: string; color?: string; label: string }[] {
   const seen = new Set(mrs.map(m => glyph(m.pipeline)))
   const out = LEGEND.filter(l => seen.has(glyph(l.status))).map(l => ({ glyph: glyph(l.status), color: pipelineColor(l.status), label: l.label }))
-  if (seen.has('·')) out.push({ glyph: '·', color: 'gray', label: 'no pipeline' })
+  if (seen.has('∙')) out.push({ glyph: '∙', color: 'gray', label: 'no pipeline' })
   return out
 }
 
-/** `s` cut or padded to exactly `n` columns; a cut ends in `…`. */
+/** `s` cut or padded to exactly `n` columns; a cut ends in `⋯`. */
 export function fit(s: string, n: number): string {
   if (n <= 0) return ''
   const chars = [...s]
   if (chars.length <= n) return s + ' '.repeat(n - chars.length)
-  return chars.slice(0, Math.max(0, n - 1)).join('') + '…'
+  return chars.slice(0, Math.max(0, n - 1)).join('') + '⋯'
 }
 
 export function ago(ms: number): string {
@@ -289,15 +293,16 @@ export function touchesMRs(command: string): boolean {
 // ── What Claude reads ─────────────────────────────────────────────────
 
 /**
- * The system prompt section. Stable for a given option set: it names the projects
- * and the tool, never MR statuses, so a refresh never busts the prompt cache.
+ * Guidance carried in the `mrs` tool's description rather than a `prompt.compose`
+ * section: on Team/Enterprise orgs the built-in cc-plugin-sec-default seats
+ * outermost and never runs a person's prompt.compose hooks.
  */
-export function promptSection(projects: readonly string[], plugin: string): string {
+export function mrsGuidance(projects: readonly string[], plugin: string): string {
   const where = projects.length ? `in ${projects.join(', ')}` : 'across GitLab'
   return [
-    `# Open GitLab merge requests`,
     `A panel beside the chat shows the person's own open merge requests ${where}, with pipeline and merge status.`,
-    `Call mcp__${plugin}__mrs when the person asks about their MRs, or before you push to, rebase or comment on one of them, to see its current pipeline, merge status and conflicts.`,
+    `It also lists their recently merged MRs that are not in prod yet, with how far each merge commit's pipeline is from the prod deploy job.`,
+    `Call mcp__${plugin}__mrs when the person asks about their MRs or what is shipping to prod, or before you push to, rebase or comment on one of them, to see its current pipeline, merge status and conflicts.`,
   ].join('\n')
 }
 
@@ -313,7 +318,7 @@ export function mrsText(mrs: readonly MR[], projects: readonly string[], refresh
       m.reviewers.length ? `reviewers ${m.reviewers.join(', ')}` : '',
       m.updatedAt ? `updated ${age(m.updatedAt, at)} ago` : '',
     ].filter(Boolean)
-    return `- ${m.ref} ${m.title} (${m.sourceBranch} → ${m.targetBranch}) [${bits.join('; ')}] ${m.url}`
+    return `- ${m.ref} ${m.title} (${m.sourceBranch} › ${m.targetBranch}) [${bits.join('; ')}] ${m.url}`
   })
   return [`Your open MRs in ${where} (read ${ago(at - refreshedAt)}):`, ...lines].join('\n')
 }

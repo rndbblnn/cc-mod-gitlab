@@ -34,7 +34,7 @@ In `/config` (or `pluginConfigs["gitlab-panel"].options` in `~/.claude/settings.
 | `host` | `gitlab.com` | Passed to `glab api --hostname`. |
 | `glab` | `glab` | Path to the CLI. |
 | `refreshSeconds` | `60` | Polling interval; `0` turns polling off. |
-| `instructClaude` | `true` | Adds a short, stable system-prompt section pointing Claude at the `mrs` tool. |
+| `instructClaude` | `true` | Adds a short, stable note to the `mrs` tool's description (no `prompt.compose`: `cc-plugin-sec-default` skips it on Team/Enterprise orgs). |
 
 Example:
 
@@ -48,7 +48,7 @@ Example:
 
 - `/gitlab` shows or hides the pane; `/gitlab refresh`; `/gitlab midas-app!1507` (or an MR URL) opens one MR.
 - In the pane: pick a row for its detail; `r` refresh, `o` open, `y` copy link, `g` copy branch, `c` comment, `b` back.
-- The status line reads `⎇ 4 MRs · 1 ✗ · 1 conflict · 2 ready`; pipeline and merge changes between reads arrive as toasts.
+- The status line reads `⇄ 4 MRs ∙ 1 ⊗ ∙ 1 conflict ∙ 2 ready`; pipeline and merge changes between reads arrive as toasts.
 - When Claude runs `git push` or `glab mr …`, the pane re-reads 15 s later.
 
 ## How it works

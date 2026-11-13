@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { Change, MR } from '../types'
+import type { Change, MR, Ship } from '../types'
 import {
   age,
   ago,
@@ -12,16 +12,17 @@ import {
   glyph,
   legend,
   mergeLabel,
+  mrsGuidance,
   mrsText,
   needsAttention,
   parseMRRef,
   parseProjects,
   pipelineColor,
-  promptSection,
   touchesMRs,
   upsert,
   type Api,
 } from './model'
+import { fetchShips, parseProdJobs, SHIP_DAYS, SHIP_MAX, shipChanges, shipLabel, shipsText, shipUrl } from './ship'
 
 // Bump a shape tag when that value's fields change: it declines what an older
 // version stored, which outlives a reload.
@@ -33,6 +34,8 @@ const selected = atom({ plugin: 'gitlab-panel', key: 'selected' } as const, null
 const mode = atom({ plugin: 'gitlab-panel', key: 'mode' } as const, 'none', { shape: 'mode-1' })
 const changes = atom({ plugin: 'gitlab-panel', key: 'changes' } as const, [], { shape: 'changes-1' })
 const now = atom({ plugin: 'gitlab-panel', key: 'now' } as const, 0, { shape: 'now-1' })
+const ships = atom({ plugin: 'gitlab-panel', key: 'ships' } as const, [], { shape: 'ships-2' })
+const startOpened = atom({ plugin: 'gitlab-panel', key: 'startOpened' } as const, false, { shape: 'start-opened-1' })
 
 const PLUGIN = 'gitlab-panel'
 const PANE = 'gitlab'
@@ -46,11 +49,13 @@ let refreshing: Promise<void> | undefined
 let queued = false
 /** Epoch ms of a re-read asked for by a write, picked up by the clock. */
 let soonAt = 0
+/** Commit ancestry answers (`projectId:sha:liveSha` › live), which never change. */
+const ancestry = new Map<string, boolean>()
 
 const errText = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
 /** Options, set as `register` runs. */
-const cfg = { projects: [] as string[], host: 'gitlab.com', glab: 'glab', refreshMs: 60_000, instruct: true }
+const cfg = { projects: [] as string[], host: 'gitlab.com', glab: 'glab', refreshMs: 60_000, instruct: true, openOnStart: true, prodJobs: parseProdJobs(undefined), shipDays: SHIP_DAYS, shipMax: SHIP_MAX }
 
 /** `glab api <path>` as JSON; throws with glab's own message when it fails. */
 async function glab($: EngineInterface, path: string, extra: readonly string[] = []): Promise<unknown> {
@@ -96,6 +101,7 @@ async function refresh($: EngineInterface): Promise<void> {
         await update($, refreshedAt, () => at)
         await update($, now, () => at)
         await update($, error, () => null)
+        if (cfg.shipDays > 0) await refreshShips($, hadRead, at)
         const sel = await read($, selected)
         if (sel && !got.some(m => m.ref === sel)) {
           await update($, selected, () => null)
@@ -112,6 +118,19 @@ async function refresh($: EngineInterface): Promise<void> {
     refreshing = undefined
   })
   return refreshing
+}
+
+/** Re-reads the Shipping section; a failure keeps the last list (the MR list's error line covers glab being down). */
+async function refreshShips($: EngineInterface, hadRead: boolean, at: number): Promise<void> {
+  try {
+    const prev = await read($, ships)
+    const got = await fetchShips(api($), cfg.projects, cfg.prodJobs, at, cfg.shipDays, ancestry, cfg.shipMax)
+    if (ancestry.size > 2000) ancestry.clear()
+    await record($, hadRead ? shipChanges(prev, got, at) : [])
+    await update($, ships, () => got)
+  } catch {
+    // Keep the last read.
+  }
 }
 
 /** Re-reads one MR (the detail view's refresh). */
@@ -161,11 +180,13 @@ async function statusLine($: EngineInterface) {
   const failed = list.filter(m => m.pipeline === 'failed').length
   const blocked = list.filter(m => m.conflicts || m.mergeStatus === 'conflict' || m.mergeStatus === 'need_rebase').length
   const ready = list.filter(m => m.mergeStatus === 'mergeable' && !m.draft).length
-  const bits = [`⎇ ${list.length} MR${list.length === 1 ? '' : 's'}`]
-  if (failed) bits.push(`${failed} ✗`)
+  const bits = [`⇄ ${list.length} MR${list.length === 1 ? '' : 's'}`]
+  if (failed) bits.push(`${failed} ⊗`)
   if (blocked) bits.push(`${blocked} conflict`)
   if (ready) bits.push(`${ready} ready`)
-  $.ui.status(`${bits.join(' · ')} · /gitlab`)
+  const deployable = (await read($, ships)).filter(s => s.state === 'waiting' || s.state === 'stale').length
+  if (deployable) bits.push(`${deployable} to deploy`)
+  $.ui.status(`${bits.join(' ∙ ')} ∙ /gitlab`)
 }
 
 type Els = { Text: any; Button: any }
@@ -173,8 +194,15 @@ type Els = { Text: any; Button: any }
 /**
  * The list as one line per MR under a dim project heading: pipeline glyph, an
  * aligned !iid column, the title, then merge status and age pushed to the right.
+ * Pressing a row opens the MR in the browser.
  */
-function listRows(els: Els, list: readonly MR[], width: number, at: number, onPick: (ref: string) => void) {
+function listRows(
+  els: Els,
+  list: readonly MR[],
+  width: number,
+  at: number,
+  onOpen: (url: string) => void,
+) {
   const { Text, Button } = els
   const iidW = Math.max(0, ...list.map(m => String(m.iid).length + 1))
   const labels = list.map(m => mergeLabel(m))
@@ -201,7 +229,7 @@ function listRows(els: Els, list: readonly MR[], width: number, at: number, onPi
     const titleW = showMeta ? room - metaW - 1 : room
     const l = labels[n]!
     out.push(
-      <Button key={`row-${m.ref}`} plain onPress={() => onPick(m.ref)}>
+      <Button key={`row-${m.ref}`} plain onPress={() => onOpen(m.url)}>
         {'  '}
         <Text color={pipelineColor(m.pipeline)}>{glyph(m.pipeline)}</Text>{' '}
         <Text dimColor>{fit(`!${m.iid}`, iidW)}</Text>{' '}
@@ -222,6 +250,56 @@ function listRows(els: Els, list: readonly MR[], width: number, at: number, onPi
   return out
 }
 
+/**
+ * The Shipping section: your last merged MRs, most recently updated pipeline first, one line each:
+ * state glyph, project!iid, title, one mark per pipeline stage, the state and the pipeline's age.
+ * Pressing a row opens the pipeline to act on.
+ */
+function shipRows(els: Els, list: readonly Ship[], width: number, at: number, onOpen: (url: string) => void) {
+  const { Text, Button } = els
+  if (!list.length) return []
+  const refW = Math.max(...list.map(s => s.ref.length))
+  const labels = list.map(s => shipLabel(s))
+  const ages = list.map(s => age(s.pipelineUpdatedAt ?? s.mergedAt, at))
+  const labelW = Math.max(...labels.map(l => l.text.length))
+  const ageW = Math.max(...ages.map(a => a.length))
+  const pipsW = Math.max(...list.map(s => s.stages.length))
+  const out: RenderChildren[] = [
+    <Text key="ship-gap"> </Text>,
+    <Text key="ship-head" bold>
+      Shipping
+    </Text>,
+  ]
+  list.forEach((s, n) => {
+    const l = labels[n]!
+    const metaW = (pipsW ? pipsW + 1 : 0) + labelW + 1 + ageW
+    const room = width - 2 - 2 - refW - 1
+    const showMeta = room - metaW - 1 >= 10
+    const titleW = showMeta ? room - metaW - 1 : room
+    out.push(
+      <Button key={`ship-${s.ref}`} plain onPress={() => onOpen(shipUrl(s))}>
+        {'  '}
+        <Text color={l.color}>{l.glyph}</Text> <Text dimColor>{fit(s.ref, refW)}</Text> <Text>{fit(s.title, titleW)}</Text>
+        {showMeta ? (
+          <Text>
+            {' '}
+            {s.stages.map((st, i) => (
+              <Text key={`pip-${i}`} color={pipelineColor(st.status)}>
+                {glyph(st.status)}
+              </Text>
+            ))}
+            {pipsW ? ' '.repeat(pipsW - s.stages.length + 1) : ''}
+            <Text color={l.color}>{l.text.padEnd(labelW)}</Text> <Text dimColor>{ages[n]!.padStart(ageW)}</Text>
+          </Text>
+        ) : (
+          ''
+        )}
+      </Button>,
+    )
+  })
+  return out
+}
+
 export const register: Register = (on, options) => {
   const n = typeof options.refreshSeconds === 'number' ? options.refreshSeconds : Number(options.refreshSeconds)
   cfg.projects = parseProjects(options.projects)
@@ -229,6 +307,12 @@ export const register: Register = (on, options) => {
   cfg.glab = typeof options.glab === 'string' && options.glab.trim() ? options.glab.trim() : 'glab'
   cfg.refreshMs = (Number.isFinite(n) && n >= 0 ? n : 60) * 1000
   cfg.instruct = options.instructClaude !== false && options.instructClaude !== 'false'
+  const days = typeof options.shipDays === 'number' ? options.shipDays : Number(options.shipDays ?? SHIP_DAYS)
+  cfg.shipDays = Number.isFinite(days) && days >= 0 ? days : SHIP_DAYS
+  const max = typeof options.shipMax === 'number' ? options.shipMax : Number(options.shipMax ?? SHIP_MAX)
+  cfg.shipMax = Number.isFinite(max) && max >= 0 ? Math.floor(max) : SHIP_MAX
+  cfg.prodJobs = parseProdJobs(options.prodJobs)
+  cfg.openOnStart = options.openOnStart !== false && options.openOnStart !== 'false'
   const { projects, refreshMs, instruct } = cfg
 
   on('session.start', async ($, e, next) => {
@@ -240,7 +324,8 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'mrs',
       description:
-        "The person's own open GitLab merge requests in the watched projects: branch, head pipeline status, merge status (conflicts, approvals, threads), comment count, reviewers and URL.",
+        "The person's own open GitLab merge requests in the watched projects: branch, head pipeline status, merge status (conflicts, approvals, threads), comment count, reviewers and URL." +
+        (instruct ? `\n\n${mrsGuidance(projects, PLUGIN)}` : ''),
       inputSchema: { type: 'object', properties: { refresh: { type: 'boolean', description: 'Re-read from GitLab first (slower).' } } },
     })
 
@@ -259,6 +344,16 @@ export const register: Register = (on, options) => {
         if (refreshMs && Date.now() - (await read($, refreshedAt)) >= refreshMs) await refresh($)
       })()
     })
+
+    // Open once per session; a reload re-runs session.start and must not bring back a pane the person closed.
+    if (cfg.openOnStart && e.isInteractive && !(await read($, startOpened))) {
+      await update($, startOpened, () => true)
+      try {
+        await openPane($)
+      } catch {
+        // Best effort: never hold up the session's start.
+      }
+    }
     return started
   })
 
@@ -287,23 +382,15 @@ export const register: Register = (on, options) => {
     return { text: projects.length ? `Watching your MRs in ${projects.join(', ')}.` : 'Watching your MRs in every project (set `projects` in /config to narrow).' }
   })
 
-  on('prompt.compose', async ($, e, next) => {
-    const composed = await next(e)
-    if (!instruct) return composed
-    return {
-      ...composed,
-      sections: [...composed.sections, { id: `${PLUGIN}:mrs`, text: promptSection(projects, PLUGIN), scope: 'session' as const }],
-    }
-  }).catch(($, e, next) => next(e))
-
   on('tool.call', { tool: `mcp__${PLUGIN}__mrs` }, async ($, e) => {
     if ((e as { refresh?: boolean }).refresh || !(await read($, refreshedAt))) await refresh($)
     const err = await read($, error)
-    const text = mrsText(await read($, mrs), projects, await read($, refreshedAt), Date.now())
+    const shipping = shipsText(await read($, ships))
+    const text = mrsText(await read($, mrs), projects, await read($, refreshedAt), Date.now()) + (shipping ? `\n\n${shipping}` : '')
     return { result: err ? `${text}\n(last refresh failed: ${err})` : text }
   }).catch(() => ({ result: 'The GitLab panel could not read your MRs; use glab directly.' }))
 
-  // Claude pushing or running `glab mr …`: re-read a little later, once GitLab caught up.
+  // Claude pushing or running `glab mr ⋯`: re-read a little later, once GitLab caught up.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const res = await next(e)
     if (e.tool === 'Bash' && typeof e.command === 'string' && touchesMRs(e.command)) soonAt = Date.now() + AFTER_WRITE_MS
@@ -333,7 +420,7 @@ export const register: Register = (on, options) => {
       return (
         <Box flexDirection="column">
           <Box gap={2}>
-            <Button key="back" label="← back" hotkey="b" plain onPress={back} />
+            <Button key="back" label="‹ back" hotkey="b" plain onPress={back} />
             <Button key="refresh" label="refresh" hotkey="r" plain onPress={() => void refreshOne($, pick)} />
           </Box>
           <Text bold wrap="truncate-end">
@@ -341,16 +428,16 @@ export const register: Register = (on, options) => {
           </Text>
           <Text>{pick.title}</Text>
           <Text dimColor wrap="truncate-end">
-            {pick.sourceBranch} → {pick.targetBranch}
+            {pick.sourceBranch} › {pick.targetBranch}
           </Text>
           <Text wrap="truncate-end">
             <Text color={pipelineColor(pick.pipeline)}>
               {glyph(pick.pipeline)} pipeline {pick.pipeline ?? 'none'}
             </Text>
             <Text dimColor>
-              {' · '}
+              {' ∙ '}
               {pick.notes} comment{pick.notes === 1 ? '' : 's'}
-              {pick.updatedAt ? ` · updated ${age(pick.updatedAt, at)} ago` : ''}
+              {pick.updatedAt ? ` ∙ updated ${age(pick.updatedAt, at)} ago` : ''}
             </Text>
           </Text>
           {pick.reviewers.length ? <Text dimColor wrap="truncate-end">reviewers {pick.reviewers.join(', ')}</Text> : null}
@@ -380,7 +467,6 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const recent = (await read($, changes)).slice(0, 4)
     const keys: RenderChildren[] = []
     legend(list).forEach((l, n) => {
       if (n) keys.push('  ')
@@ -388,32 +474,22 @@ export const register: Register = (on, options) => {
     })
     const failed = list.filter(m => m.pipeline === 'failed').length
     const attention = list.filter(needsAttention).length
-    const where = projects.length ? `${projects.length} project${projects.length === 1 ? '' : 's'}` : 'all projects'
     // Docked, the body is at least the pane's height so the footer sits on its last rows.
     const dock = e.props.placement === 'dock'
     const minRows = dock ? e.props.scroll.bodyRows : undefined
     return (
       <Box flexDirection="column" minHeight={minRows}>
         <Box flexDirection="column" flexGrow={1}>
-          <Text bold wrap="truncate-end">
-            {list.length} open MR{list.length === 1 ? '' : 's'}
-            <Text dimColor> · {where}</Text>
-          </Text>
           <Text dimColor wrap="truncate">
-            {failed ? <Text color="red">{failed} failing · </Text> : ''}
-            {attention - failed > 0 ? <Text color="red">{attention - failed} blocked · </Text> : ''}
-            {isLoading ? '⟳ reading GitLab…' : refreshed ? ago(at - refreshed) : 'not read yet'}
+            {failed ? <Text color="red">{failed} failing ∙ </Text> : ''}
+            {attention - failed > 0 ? <Text color="red">{attention - failed} blocked ∙ </Text> : ''}
+            {isLoading ? '⋯ reading GitLab⋯' : refreshed ? ago(at - refreshed) : 'not read yet'}
           </Text>
-          {err ? <Text color="red" wrap="truncate-end">✗ {err}</Text> : null}
+          {err ? <Text color="red" wrap="truncate-end">⊗ {err}</Text> : null}
           <Text> </Text>
-          {list.length === 0 && <Text dimColor>{isLoading || !refreshed ? 'Loading…' : 'No open MRs of yours here.'}</Text>}
-          {listRows({ Text, Button }, list, width, at, ref => void update($, selected, () => ref))}
-          {recent.length ? <Text dimColor>{'─'.repeat(width)}</Text> : null}
-          {recent.map(c => (
-            <Text dimColor wrap="truncate-end">
-              {ago(at - c.at)} {c.ref} <Text color={c.tone === 'good' ? 'green' : c.tone === 'bad' ? 'red' : 'text'}>{c.what}</Text>
-            </Text>
-          ))}
+          {list.length === 0 && <Text dimColor>{isLoading || !refreshed ? 'Loading⋯' : 'No open MRs of yours here.'}</Text>}
+          {listRows({ Text, Button }, list, width, at, url => void openUrl($, url))}
+          {shipRows({ Text, Button }, await read($, ships), width, at, url => void openUrl($, url))}
         </Box>
         <Box flexDirection="column">
           <Box gap={2}>

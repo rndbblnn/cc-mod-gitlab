@@ -34,6 +34,38 @@ export type Change = {
   at: number
 }
 
+/** One stage of a merge commit's pipeline, its jobs rolled up. */
+export type ShipStage = { name: string; status: string }
+
+/** Where a merged MR stands on its way to prod. */
+export type ShipState = 'live' | 'deploying' | 'waiting' | 'stale' | 'building' | 'failed' | 'no-deploy' | 'no-pipeline'
+
+/** One of your merged MRs on its way to prod. */
+export type Ship = {
+  ref: string
+  project: string
+  projectId: number
+  iid: number
+  title: string
+  url: string
+  targetBranch: string
+  mergedAt: string
+  /** The commit the merge put on the target branch. */
+  sha: string
+  /** The project's prod deploy job name (from the `prodJobs` option). */
+  prodJob: string
+  /** The merge commit's pipeline stages, in order; empty once live. */
+  stages: ShipStage[]
+  state: ShipState
+  pipelineId?: number
+  pipelineUrl?: string
+  /** When the merge commit's pipeline last changed: the list is ordered on it. */
+  pipelineUpdatedAt?: string
+  /** The newest pipeline on the target branch: the one to deploy from when this MR's own is stale. */
+  newestPipelineId?: number
+  newestPipelineUrl?: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'gitlab-panel': {
@@ -50,6 +82,10 @@ declare module 'claude-code' {
       changes: Shaped<Change[]>
       /** Clock for "refreshed 30s ago". */
       now: Shaped<number>
+      /** Set once the session's start-up open has run, so a hot reload does not reopen a pane the person closed. */
+      startOpened: Shaped<boolean>
+      /** Your merged MRs not in prod yet, as last read. */
+      ships: Shaped<Ship[]>
     }
   }
 }
