@@ -95,3 +95,14 @@ for (const [name, openOnStart, want] of [
     await $.command.run({ command: 'gitlab', args: 'refresh' } as never) // let the start-up read settle
   })
 }
+
+test('opens rows in the configured Chrome profile', { options: { projects: 'midas-backend', chromeProfile: 'Profile 1' } }, async ($, on) => {
+  const argvs: string[][] = []
+  engine(on, argvs)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'gitlab', args: 'refresh' } as never)
+  const ui = await $.ui.mount(PANE)
+  await ui.press({ key: 'row-midas-backend!3' })
+  expect(argvs.some(a => a[0] === 'google-chrome' && a[1] === '--profile-directory=Profile 1' && a[2]!.includes('/merge_requests/3'))).toBe(true)
+  expect(argvs.some(a => a[0] === 'xdg-open')).toBe(false)
+})

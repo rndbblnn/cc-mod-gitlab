@@ -63,6 +63,12 @@
       "title": "Shipping: at most",
       "description": "Keep only this many of your most recently merged MRs in the Shipping section.",
       "default": 3
+    },
+    "chromeProfile": {
+      "type": "string",
+      "title": "Chrome profile",
+      "description": "Chrome profile directory (e.g. \"Profile 1\", see chrome://version) to open MRs and pipelines in, via google-chrome --profile-directory. Empty uses the default browser (xdg-open).",
+      "default": ""
     }
   }
 }

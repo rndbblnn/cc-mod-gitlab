@@ -55,7 +55,7 @@ const ancestry = new Map<string, boolean>()
 const errText = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
 /** Options, set as `register` runs. */
-const cfg = { projects: [] as string[], host: 'gitlab.com', glab: 'glab', refreshMs: 60_000, instruct: true, openOnStart: true, prodJobs: parseProdJobs(undefined), shipDays: SHIP_DAYS, shipMax: SHIP_MAX }
+const cfg = { projects: [] as string[], host: 'gitlab.com', glab: 'glab', refreshMs: 60_000, instruct: true, openOnStart: true, prodJobs: parseProdJobs(undefined), shipDays: SHIP_DAYS, shipMax: SHIP_MAX, chromeProfile: '' }
 
 /** `glab api <path>` as JSON; throws with glab's own message when it fails. */
 async function glab($: EngineInterface, path: string, extra: readonly string[] = []): Promise<unknown> {
@@ -162,6 +162,12 @@ async function comment($: EngineInterface, mr: MR, body: string): Promise<void> 
 }
 
 async function openUrl($: EngineInterface, url: string) {
+  if (cfg.chromeProfile) {
+    try {
+      const r = await $.process.run(['google-chrome', `--profile-directory=${cfg.chromeProfile}`, url], { timeoutMs: 5000 })
+      if (r.exitCode === 0) return
+    } catch {}
+  }
   try {
     const r = await $.process.run(['xdg-open', url], { timeoutMs: 5000 })
     if (r.exitCode !== 0) throw new Error(r.stderr.trim() || `exit ${r.exitCode}`)
@@ -312,6 +318,7 @@ export const register: Register = (on, options) => {
   const max = typeof options.shipMax === 'number' ? options.shipMax : Number(options.shipMax ?? SHIP_MAX)
   cfg.shipMax = Number.isFinite(max) && max >= 0 ? Math.floor(max) : SHIP_MAX
   cfg.prodJobs = parseProdJobs(options.prodJobs)
+  cfg.chromeProfile = typeof options.chromeProfile === 'string' ? options.chromeProfile.trim() : ''
   cfg.openOnStart = options.openOnStart !== false && options.openOnStart !== 'false'
   const { projects, refreshMs, instruct } = cfg
 
