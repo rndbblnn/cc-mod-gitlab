@@ -24,4 +24,4 @@ A Claude Code **mod** (hooks module). Load the `plugin-authoring` skill before c
 - Type-check against `claude-code` + `claude-code-tools` only (`claude-code-mcp` can be huge).
 
 ## Check
-`claude plugin validate . && claude plugin test .` (18 tests).
+`claude plugin validate . && claude plugin test .` (20 tests).
